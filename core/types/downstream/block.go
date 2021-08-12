@@ -7,7 +7,60 @@ import (
 
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/params"
 )
+
+type Total struct {
+	Version string           `json:"version"`
+	Block   *Block           `json:"block"`
+	Txs     []*TxWithReceipt `json:"transactions"`
+	Logs    []*EventLog      `json:"eventLogs"`
+}
+
+func NewTotalOut(chainConfig *params.ChainConfig, block *types.Block, receipts []*types.Receipt) (*Total, error) {
+
+	dBlock := FromOrgBlock(block)
+	dTxs := make([]*TxWithReceipt, 0, block.Transactions().Len())
+	dLogs := make([]*EventLog, 0)
+
+	signer := types.MakeSigner(chainConfig, block.Number())
+	for i, oTx := range block.Transactions() {
+		tx, err := FromOrgTx(oTx, block, signer)
+		if err != nil {
+			log.Error("convert tx error", "err", err)
+			return nil, err
+		}
+
+		tx.Index = i
+		dBlock.Transactions = append(dBlock.Transactions, tx)
+
+		receipt2 := FromOrgReceipt(receipts[i], oTx.Hash().Hex(), tx.Index, block)
+		txr, err := FromOrgTxWithReceipt(oTx, block, receipt2, signer)
+		if err != nil {
+			log.Error("convert tx with receipt error", "err", err)
+			return nil, err
+		}
+
+		dTxs = append(dTxs, txr)
+
+		for _, eventLog := range receipt2.Logs {
+			eventLog.Class = "com.mingsi.data.connector.entity.EventLog"
+			dLogs = append(dLogs, eventLog)
+		}
+	}
+
+	dBlock.TransactionCount = len(dBlock.Transactions)
+
+	totalOut := &Total{
+		Version: "1",
+		Block:   dBlock,
+		Txs:     dTxs,
+		Logs:    dLogs,
+	}
+
+	return totalOut, nil
+}
 
 type Block struct {
 	Number           *big.Int `json:"_id"`
