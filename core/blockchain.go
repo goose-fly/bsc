@@ -949,11 +949,13 @@ func (bc *BlockChain) sendBlockToDownstream(block *types.Block) {
 		)
 
 		if err != nil {
-			log.Error("Send data to kafka error", "block hash", block.Hash().Hex(), "block number", block.NumberU64(), "err", err)
+			log.Error("Send data to downstream error", "block hash", block.Hash().Hex(), "block number", block.NumberU64(), "err", err)
 			time.Sleep(time.Millisecond * time.Duration(bc.downstreamConfig.RetryInterval))
 			bc.setupDownstreamConn(block)
 			continue
 		}
+
+		log.Debug("Send data to downstream", "block hash", block.Hash().Hex(), "block number", block.NumberU64())
 
 		break
 	}
