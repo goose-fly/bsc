@@ -936,14 +936,14 @@ func (bc *BlockChain) sendBlockToDownstream(block *types.Block) {
 		err = bc.downstreamChan.Publish(
 			bc.downstreamConfig.Exchange,
 			bc.downstreamConfig.RoutingKey,
-			false,
+			true,
 			false,
 			amqp.Publishing{
 				Headers:         amqp.Table{},
 				ContentType:     "text/plain",
 				ContentEncoding: "",
 				Body:            data,
-				DeliveryMode:    amqp.Transient,
+				DeliveryMode:    amqp.Persistent,
 				Priority:        0,
 			},
 		)
