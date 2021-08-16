@@ -12,7 +12,7 @@ RetryInterval = 500 #ms
 # 通过RPC导出Block信息到文件
 通过http请求
 ```
-curl --data '{"method":"eth_dumpBlock","params":[{"start": "0x1", "end": "0x11", "file": "/home/op/blocks.json"}],"id":1,"jsonrpc":"2.0"}' -H "Content-Type: application/json" -X POST localhost:8545
+curl --data '{"method":"eth_dumpBlock","params":["0x1", "0x11", "/home/op/blocks.json"],"id":1,"jsonrpc":"2.0"}' -H "Content-Type: application/json" -X POST localhost:8545
 ```
 通过js控制台操作
 ```
