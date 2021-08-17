@@ -21,3 +21,5 @@ geth attach data/eth.ipc
 
 $ eth.dumpBlock(1, 100, "/home/op/blocks.json")
 ```
+
+> 同步模式问题，如果最开始使用fast/snap模式进行区块同步，那么在节点追到最新区块后，需要将同步模式改为full，防止后续的区块执行不会出现不连续的情况；
