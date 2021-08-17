@@ -24,9 +24,12 @@ import (
 	"io"
 	"math/big"
 	mrand "math/rand"
+	"os"
+	"os/signal"
 	"sort"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -216,6 +219,7 @@ type BlockChain struct {
 	downstreamConn    *amqp.Connection
 	downstreamChan    *amqp.Channel
 	downstreamConfirm chan amqp.Confirmation
+	downstreamSeq     int
 }
 
 // NewBlockChain returns a fully initialised block chain using information
@@ -257,6 +261,10 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 		engine:           engine,
 		vmConfig:         vmConfig,
 		downstreamConfig: downstreamConfig,
+	}
+
+	if bc.downstreamConfig != nil && bc.downstreamConfig.TimeoutInterval == 0 {
+		bc.downstreamConfig.TimeoutInterval = 5000
 	}
 	bc.validator = NewBlockValidator(chainConfig, bc, engine)
 	bc.processor = NewStateProcessor(chainConfig, bc, engine)
@@ -841,17 +849,14 @@ func (bc *BlockChain) writeHeadBlock(block *types.Block) {
 func (bc *BlockChain) setupDownstreamConn(block *types.Block) {
 	var err error
 	for {
-		bc.downstreamConn, err = amqp.Dial(bc.downstreamConfig.URI)
+		bc.downstreamConn, err = amqp.Dial(bc.downstreamConfig.URIs[bc.downstreamSeq%len(bc.downstreamConfig.URIs)])
+		bc.downstreamSeq += 1
 		if err != nil {
 			log.Error("Connect downstream error", "block hash", block.Hash().Hex(), "block number", block.NumberU64(), "err", err)
 			time.Sleep(time.Millisecond * time.Duration(bc.downstreamConfig.RetryInterval))
 			continue
 		}
 
-		break
-	}
-
-	for {
 		bc.downstreamChan, err = bc.downstreamConn.Channel()
 		if err != nil {
 			log.Error("Create downstreeam channel error", "block hash", block.Hash().Hex(), "block number", block.NumberU64(), "err", err)
@@ -859,10 +864,15 @@ func (bc *BlockChain) setupDownstreamConn(block *types.Block) {
 			continue
 		}
 
+		if err = bc.downstreamChan.Confirm(false); err != nil {
+			log.Error("Set confirm error", "block hash", block.Hash().Hex(), "block number", block.NumberU64(), "err", err)
+			time.Sleep(time.Millisecond * time.Duration(bc.downstreamConfig.RetryInterval))
+			continue
+		}
+
+		bc.downstreamConfirm = bc.downstreamChan.NotifyPublish(make(chan amqp.Confirmation, 1))
 		break
 	}
-
-	bc.downstreamConfirm = bc.downstreamChan.NotifyPublish(make(chan amqp.Confirmation, 1))
 }
 
 func (bc *BlockChain) sendBlockToDownstream(block *types.Block) {
@@ -932,7 +942,19 @@ func (bc *BlockChain) sendBlockToDownstream(block *types.Block) {
 		break
 	}
 
+	var timeoutTimer *time.Timer
+	timeoutDuration := time.Millisecond * time.Duration(bc.downstreamConfig.TimeoutInterval)
+
+	sigc := make(chan os.Signal, 1)
+	signal.Notify(sigc, syscall.SIGINT, syscall.SIGTERM)
+
 	for {
+		if timeoutTimer != nil {
+			timeoutTimer.Stop()
+		}
+
+		timeoutTimer = time.NewTimer(timeoutDuration)
+
 		err = bc.downstreamChan.Publish(
 			bc.downstreamConfig.Exchange,
 			bc.downstreamConfig.RoutingKey,
@@ -955,10 +977,25 @@ func (bc *BlockChain) sendBlockToDownstream(block *types.Block) {
 			continue
 		}
 
+		select {
+		case confirm := <-bc.downstreamConfirm:
+			if !confirm.Ack {
+				log.Error("Send data without ack confirm", "block hash", block.Hash().Hex(), "block number", block.NumberU64())
+				continue
+			}
+		case <-timeoutTimer.C:
+			log.Error("Send data timeout", "block hash", block.Hash().Hex(), "block number", block.NumberU64())
+			continue
+		case <-sigc:
+			break
+		}
+
 		log.Debug("Send data to downstream", "block hash", block.Hash().Hex(), "block number", block.NumberU64())
 
 		break
 	}
+
+	timeoutTimer.Stop()
 }
 
 // Genesis retrieves the chain's genesis block.
