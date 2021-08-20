@@ -874,56 +874,12 @@ func (bc *BlockChain) sendBlockToDownstream(block *types.Block) {
 		bc.setupDownstreamConn(block)
 	}
 
-	receipts := rawdb.ReadReceipts(bc.db, block.Hash(), block.NumberU64(), bc.chainConfig)
-
-	if block.Transactions().Len() != receipts.Len() {
-		log.Error("Txs count and receipts count not equal", "block hash", block.Hash().Hex(), "block number", block.NumberU64(), "tx count", block.Transactions().Len(), "receipt count", receipts.Len())
-		return
-	}
-
 	dBlock := downstream.FromOrgBlock(block)
-	dTxs := make([]*downstream.TxWithReceipt, 0, block.Transactions().Len())
-	dLogs := make([]*downstream.EventLog, 0)
-
-	signer := types.MakeSigner(bc.chainConfig, block.Number())
-	for i, oTx := range block.Transactions() {
-		tx, err := downstream.FromOrgTx(oTx, block, signer)
-		if err != nil {
-			log.Error("convert tx error", "err", err)
-			return
-		}
-
-		tx.Index = i
-		dBlock.Transactions = append(dBlock.Transactions, tx)
-
-		receipt2 := downstream.FromOrgReceipt(receipts[i], oTx.Hash().Hex(), tx.Index, block)
-		txr, err := downstream.FromOrgTxWithReceipt(oTx, block, receipt2, signer)
-		if err != nil {
-			log.Error("convert tx with receipt error", "err", err)
-			return
-		}
-
-		dTxs = append(dTxs, txr)
-
-		for _, eventLog := range receipt2.Logs {
-			eventLog.Class = "com.mingsi.data.connector.entity.EventLog"
-			dLogs = append(dLogs, eventLog)
-		}
-	}
-
-	dBlock.TransactionCount = len(dBlock.Transactions)
-
-	totalOut := &downstream.Total{
-		Version: "1",
-		Block:   dBlock,
-		Txs:     dTxs,
-		Logs:    dLogs,
-	}
 
 	var data []byte
 	var err error
 	for {
-		data, err = json.Marshal(totalOut)
+		data, err = json.Marshal(dBlock)
 		if err != nil {
 			log.Error("Marshal data error", "block hash", block.Hash().Hex(), "block number", block.NumberU64(), "err", err)
 			time.Sleep(time.Millisecond * time.Duration(bc.downstreamConfig.RetryInterval))
