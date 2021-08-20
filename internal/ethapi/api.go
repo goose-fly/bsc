@@ -682,12 +682,6 @@ func (s *PublicBlockChainAPI) DumpBlock(ctx context.Context, start rpc.BlockNumb
 	if err != nil {
 		return err
 	}
-
-	latest := s.b.CurrentHeader()
-	if end > rpc.BlockNumber(latest.Number.Uint64()) {
-		return fmt.Errorf("end block is bigger than current header number")
-	}
-
 	for num := start; num <= end; num++ {
 		block, err := s.b.BlockByNumber(ctx, num)
 		if err != nil {
