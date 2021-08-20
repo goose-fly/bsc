@@ -45,9 +45,8 @@ func NewTotalOut(chainConfig *params.ChainConfig, block *types.Block, receipts [
 		dTxs = append(dTxs, txr)
 
 		for _, eventLog := range receipt2.Logs {
-			newEvent := *eventLog
-			newEvent.Class = "com.mingsi.data.connector.entity.EventLog"
-			dLogs = append(dLogs, &newEvent)
+			eventLog.Class = "com.mingsi.data.connector.entity.EventLog"
+			dLogs = append(dLogs, eventLog)
 		}
 	}
 
