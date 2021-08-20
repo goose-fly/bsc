@@ -18,7 +18,6 @@
 package core
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -37,7 +36,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/state/snapshot"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/core/types/downstream"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
@@ -47,7 +45,6 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
 	lru "github.com/hashicorp/golang-lru"
-	"github.com/streadway/amqp"
 )
 
 var (
@@ -211,17 +208,12 @@ type BlockChain struct {
 
 	shouldPreserve  func(*types.Block) bool        // Function used to determine whether should preserve the given block.
 	terminateInsert func(common.Hash, uint64) bool // Testing hook used to terminate ancient receipt chain insertion.
-
-	downstreamConfig  *DownstreamConfig
-	downstreamConn    *amqp.Connection
-	downstreamChan    *amqp.Channel
-	downstreamConfirm chan amqp.Confirmation
 }
 
 // NewBlockChain returns a fully initialised block chain using information
 // available in the database. It initialises the default Ethereum Validator and
 // Processor.
-func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *params.ChainConfig, downstreamConfig *DownstreamConfig, engine consensus.Engine, vmConfig vm.Config, shouldPreserve func(block *types.Block) bool, txLookupLimit *uint64) (*BlockChain, error) {
+func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *params.ChainConfig, engine consensus.Engine, vmConfig vm.Config, shouldPreserve func(block *types.Block) bool, txLookupLimit *uint64) (*BlockChain, error) {
 	if cacheConfig == nil {
 		cacheConfig = defaultCacheConfig
 	}
@@ -245,18 +237,17 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, chainConfig *par
 			Journal:   cacheConfig.TrieCleanJournal,
 			Preimages: cacheConfig.Preimages,
 		}),
-		triesInMemory:    cacheConfig.TriesInMemory,
-		quit:             make(chan struct{}),
-		shouldPreserve:   shouldPreserve,
-		bodyCache:        bodyCache,
-		bodyRLPCache:     bodyRLPCache,
-		receiptsCache:    receiptsCache,
-		blockCache:       blockCache,
-		txLookupCache:    txLookupCache,
-		futureBlocks:     futureBlocks,
-		engine:           engine,
-		vmConfig:         vmConfig,
-		downstreamConfig: downstreamConfig,
+		triesInMemory:  cacheConfig.TriesInMemory,
+		quit:           make(chan struct{}),
+		shouldPreserve: shouldPreserve,
+		bodyCache:      bodyCache,
+		bodyRLPCache:   bodyRLPCache,
+		receiptsCache:  receiptsCache,
+		blockCache:     blockCache,
+		txLookupCache:  txLookupCache,
+		futureBlocks:   futureBlocks,
+		engine:         engine,
+		vmConfig:       vmConfig,
 	}
 	bc.validator = NewBlockValidator(chainConfig, bc, engine)
 	bc.processor = NewStateProcessor(chainConfig, bc, engine)
@@ -808,8 +799,6 @@ func (bc *BlockChain) ExportN(w io.Writer, first uint64, last uint64) error {
 //
 // Note, this function assumes that the `mu` mutex is held!
 func (bc *BlockChain) writeHeadBlock(block *types.Block) {
-	bc.sendBlockToDownstream(block)
-
 	// If the block is on a side chain or an unknown one, force other heads onto it too
 	updateHeads := rawdb.ReadCanonicalHash(bc.db, block.NumberU64()) != block.Hash()
 
@@ -836,83 +825,6 @@ func (bc *BlockChain) writeHeadBlock(block *types.Block) {
 	}
 	bc.currentBlock.Store(block)
 	headBlockGauge.Update(int64(block.NumberU64()))
-}
-
-func (bc *BlockChain) setupDownstreamConn(block *types.Block) {
-	var err error
-	for {
-		bc.downstreamConn, err = amqp.Dial(bc.downstreamConfig.URI)
-		if err != nil {
-			log.Error("Connect downstream error", "block hash", block.Hash().Hex(), "block number", block.NumberU64(), "err", err)
-			time.Sleep(time.Millisecond * time.Duration(bc.downstreamConfig.RetryInterval))
-			continue
-		}
-
-		break
-	}
-
-	for {
-		bc.downstreamChan, err = bc.downstreamConn.Channel()
-		if err != nil {
-			log.Error("Create downstreeam channel error", "block hash", block.Hash().Hex(), "block number", block.NumberU64(), "err", err)
-			time.Sleep(time.Millisecond * time.Duration(bc.downstreamConfig.RetryInterval))
-			continue
-		}
-
-		break
-	}
-
-	bc.downstreamConfirm = bc.downstreamChan.NotifyPublish(make(chan amqp.Confirmation, 1))
-}
-
-func (bc *BlockChain) sendBlockToDownstream(block *types.Block) {
-	if bc.downstreamConfig == nil {
-		return
-	}
-
-	if bc.downstreamConn == nil || bc.downstreamConn.IsClosed() {
-		bc.setupDownstreamConn(block)
-	}
-
-	dBlock := downstream.FromOrgBlock(block)
-
-	var data []byte
-	var err error
-	for {
-		data, err = json.Marshal(dBlock)
-		if err != nil {
-			log.Error("Marshal data error", "block hash", block.Hash().Hex(), "block number", block.NumberU64(), "err", err)
-			time.Sleep(time.Millisecond * time.Duration(bc.downstreamConfig.RetryInterval))
-			continue
-		}
-		break
-	}
-
-	for {
-		err = bc.downstreamChan.Publish(
-			bc.downstreamConfig.Exchange,
-			bc.downstreamConfig.RoutingKey,
-			false,
-			false,
-			amqp.Publishing{
-				Headers:         amqp.Table{},
-				ContentType:     "text/plain",
-				ContentEncoding: "",
-				Body:            data,
-				DeliveryMode:    amqp.Transient,
-				Priority:        0,
-			},
-		)
-
-		if err != nil {
-			log.Error("Send data to kafka error", "block hash", block.Hash().Hex(), "block number", block.NumberU64(), "err", err)
-			time.Sleep(time.Millisecond * time.Duration(bc.downstreamConfig.RetryInterval))
-			bc.setupDownstreamConn(block)
-			continue
-		}
-
-		break
-	}
 }
 
 // Genesis retrieves the chain's genesis block.
