@@ -3,11 +3,10 @@
 在节点启动的config.toml中添加如下配置
 ```
 [Eth.Downstream]
-URI= ["amqp://guest:guest@localhost:5672"]
+URI= "amqp://guest:guest@localhost:5672"
 Exchange = "test-exchange"
 RoutingKey = "test-key"
 RetryInterval = 500 #ms
-TimeoutInterval = 5000 #ms
 ```
 
 # 通过RPC导出Block信息到文件

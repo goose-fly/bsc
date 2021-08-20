@@ -1,9 +1,8 @@
 package core
 
 type DownstreamConfig struct {
-	URIs            []string `toml:",omitempty"`
-	Exchange        string   `toml:",omitempty"`
-	RoutingKey      string   `toml:",omitempty"`
-	RetryInterval   int      `toml:",omitempty"` //in millsecond
-	TimeoutInterval int      `toml:",omitempty"` //in millsecond
+	URI           string `toml:",omitempty"`
+	Exchange      string `toml:",omitempty"`
+	RoutingKey    string `toml:",omitempty"`
+	RetryInterval int    `toml:",omitempty"` //in millsecond
 }
