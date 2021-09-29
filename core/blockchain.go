@@ -22,6 +22,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"bytes"
+	"compress/gzip"
 	"math/big"
 	mrand "math/rand"
 	"os"
@@ -935,6 +937,8 @@ func (bc *BlockChain) sendBlockToDownstream(block *types.Block) {
 		Logs:    dLogs,
 	}
 
+	var content_encoding = ""
+	var message_data []byte
 	var data []byte
 	var err error
 	for {
@@ -945,6 +949,22 @@ func (bc *BlockChain) sendBlockToDownstream(block *types.Block) {
 			continue
 		}
 		break
+	}
+
+	if bc.downstreamConfig.Compress == true {
+		// compress data with gzip
+		var buffer bytes.Buffer
+		gz := gzip.NewWriter(&buffer)
+		if _, err := gz.Write(data); err != nil {
+			log.Error("Compress data error", "err", err)
+		}
+		if err := gz.Close(); err != nil {
+			log.Error("Compress data error", "err", err)
+		}
+		message_data = buffer.Bytes()
+		content_encoding = "gzip"
+	} else {
+		message_data = data
 	}
 
 	var timeoutTimer *time.Timer
@@ -968,8 +988,8 @@ func (bc *BlockChain) sendBlockToDownstream(block *types.Block) {
 			amqp.Publishing{
 				Headers:         amqp.Table{},
 				ContentType:     "text/plain",
-				ContentEncoding: "",
-				Body:            data,
+				ContentEncoding: content_encoding,
+				Body:            message_data,
 				DeliveryMode:    amqp.Persistent,
 				Timestamp:       time.Now(),
 				Priority:        0,
