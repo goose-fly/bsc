@@ -987,7 +987,7 @@ func (bc *BlockChain) sendBlockToDownstream(block *types.Block) {
 			false,
 			amqp.Publishing{
 				Headers:         amqp.Table{},
-				ContentType:     "text/plain",
+				ContentType:     "application/json",
 				ContentEncoding: content_encoding,
 				Body:            message_data,
 				DeliveryMode:    amqp.Persistent,
