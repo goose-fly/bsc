@@ -953,6 +953,7 @@ func (bc *BlockChain) sendBlockToDownstream(block *types.Block) {
 
 	if bc.downstreamConfig.Compress == true {
 		// compress data with gzip
+		start := time.Now()
 		var buffer bytes.Buffer
 		gz := gzip.NewWriter(&buffer)
 		if _, err := gz.Write(data); err != nil {
@@ -962,6 +963,8 @@ func (bc *BlockChain) sendBlockToDownstream(block *types.Block) {
 			log.Error("Compress data error", "err", err)
 		}
 		message_data = buffer.Bytes()
+		elapsed := time.Since(start)
+		log.Debug("Compress message", "from", len(data), "to", len(message_data), "takes(ms)", elapsed.Milliseconds())
 		content_encoding = "gzip"
 	} else {
 		message_data = data
